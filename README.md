@@ -33,3 +33,20 @@ on stdout, host banners on stderr.
 identity_hash relies on wasmtime's GC being non-moving: the raw GC index
 of an object keys the hash table. If wasmtime's collector ever moves
 objects this needs a redesign (a core-side hash slot is the alternative).
+
+## Releases
+
+The [releases page](https://github.com/ghul-lang/ghul-wasmtime/releases)
+carries a prebuilt `ghul-wasmtime` for x86-64 Linux. Download it, mark it
+executable, and run a wasm-target program through it:
+
+```sh
+ghul-wasmtime program.wasm [program arguments...]
+```
+
+Requirements and limits of the v0.1.0 build: glibc 2.34 or later
+(Ubuntu 22.04+, Debian 12+); dynamically linked against libc, libm and
+libgcc_s only. Asynchronous programs are not yet supported and suspend
+rather than running. `--input-file <virtual>=<real>` seeds the program's
+input files, and `--no-file-system` gives it an empty in-memory one, in
+both loader modes.
