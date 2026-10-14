@@ -1,0 +1,10 @@
+[package]
+name = "ghul-wasmtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+wasmtime = "49"
