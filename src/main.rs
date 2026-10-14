@@ -409,7 +409,7 @@ fn bigint(
             }
             v
         }
-        "mod_pow" | "gcd" | "bit_length" | "to_hex" | "is_integer_text" | "to_long" | "fits_long" | "to_double" | "to_string" | "compare" | "equals" | "hash" => big0.clone(),
+        "is_integer_text" | "to_long" | "fits_long" | "to_double" | "to_string" | "compare" | "equals" | "hash" => big0.clone(),
         other => panic!("unhandled bigint op {other}"),
     };
 
@@ -436,7 +436,76 @@ fn bigint(
             let m = big0.mod_floor(&BigInt::from(2u32).pow(32u32)).to_i32().unwrap_or(0);
             outs[0] = Val::I32(m);
         }
-        _ => outs[0] = new_text(caller, &produce.to_string()),
+        "bit_length" => {
+            outs[0] = Val::I32(if big0.is_zero() {
+                0
+            } else if big0.is_negative() {
+                (!&big0).bits() as i32
+            } else {
+                big0.bits() as i32
+            });
+        }
+        "mod_pow" => {
+            // (base ** exponent) mod modulus, as .NET's ModPow: the
+            // exponent non-negative, the result taking the modulus's sign.
+            let modulus = big(caller, &args[2]);
+            let negative = modulus.is_negative();
+            let m = modulus.abs();
+            let mut result = BigInt::from(1) % &m;
+            let mut base = &big0 % &m;
+            let mut rest = big1.abs();
+
+            while !rest.is_zero() {
+                if &rest % 2u32 == BigInt::from(1) {
+                    result = (&result * &base) % &m;
+                }
+
+                base = (&base * &base) % &m;
+                rest >>= 1;
+            }
+
+            if negative {
+                result = -result;
+            }
+
+            outs[0] = Val::ExternRef(Some(ExternRef::new(caller, result).expect("externref")));
+        }
+        "gcd" => {
+            let a = big0.abs();
+            let b = big1.abs();
+            outs[0] = Val::ExternRef(Some(ExternRef::new(caller, a.gcd(&b)).expect("externref")));
+        }
+        "to_hex" => {
+            // Two's complement in as few hex digits as hold the value and
+            // its sign, as .NET writes a BigInteger under X.
+            let upper = unwrap_i32(&args[1]) != 0;
+            let magnitude_hex = if big0.is_negative() {
+                (!&big0).to_str_radix(16)
+            } else {
+                big0.to_str_radix(16)
+            };
+            let digits = magnitude_hex.len();
+            let mut text = if big0.is_negative() {
+                let wrap = BigInt::from(1) << (4 * digits);
+                format!("{:0>width$}", (&wrap + &big0).to_str_radix(16), width = digits)
+            } else {
+                big0.to_str_radix(16)
+            };
+
+            if big0.is_zero() {
+                text = "0".to_string();
+            } else if big0.is_positive() {
+                if text.starts_with(['8', '9', 'a', 'b', 'c', 'd', 'e', 'f']) {
+                    text = format!("0{text}");
+                }
+            } else if text.starts_with(['0', '1', '2', '3', '4', '5', '6', '7']) {
+                text = format!("f{text}");
+            }
+
+            let text = if upper { text.to_uppercase() } else { text };
+            outs[0] = new_text(caller, &text);
+        }
+        _ => outs[0] = Val::ExternRef(Some(ExternRef::new(caller, produce).expect("externref"))),
     }
 
     Ok(())
