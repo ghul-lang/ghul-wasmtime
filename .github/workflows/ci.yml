@@ -42,7 +42,7 @@ jobs:
         prerelease: ${{ github.event_name == 'pull_request' && format('beta.{0}', github.run_number) || '' }}
 
   ci:
-    name: CI
+    name: Build and smoke test
     needs: [version]
     runs-on: ubuntu-latest
     timeout-minutes: 20
