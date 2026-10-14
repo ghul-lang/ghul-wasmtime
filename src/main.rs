@@ -13,6 +13,8 @@ struct HostState {
     args: Vec<String>,
     env: Vec<(String, String)>,
     entries: Vec<String>,
+    input_files: Vec<(String, Vec<u8>)>,
+    real_fs: bool,
     last_error: i32,
     identities: std::collections::HashMap<u32, i32>,
     next_identity: u32,
@@ -34,7 +36,25 @@ fn main() {
     config.collector(wasmtime::Collector::DeferredReferenceCounting);
     let engine = Engine::new(&config).unwrap();
     let module = Module::from_file(&engine, &path).unwrap();
-    let args: Vec<String> = std::env::args().skip(2).collect();
+    // --input-file <virtual>=<real> seeds the input_file_* surface, the
+    // loader's options.files; everything else is the program's argv.
+    let mut input_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut real_fs = true;
+    let mut args: Vec<String> = Vec::new();
+
+    let mut argv = std::env::args().skip(2);
+    while let Some(arg) = argv.next() {
+        if arg == "--input-file" {
+            let spec = argv.next().unwrap_or_else(|| panic!("--input-file needs <virtual>=<real>"));
+            let (virtual_path, real_path) = spec.split_once('=').unwrap_or_else(|| panic!("--input-file needs <virtual>=<real>, got {spec}"));
+            let bytes = std::fs::read(real_path).unwrap_or_else(|e| panic!("--input-file cannot read {real_path}: {e}"));
+            input_files.push((virtual_path.to_string(), bytes));
+        } else if arg == "--no-file-system" {
+            real_fs = false;
+        } else {
+            args.push(arg);
+        }
+    }
     let env: Vec<(String, String)> = std::env::vars().collect();
     let mut store = Store::new(
         &engine,
@@ -45,6 +65,8 @@ fn main() {
             args,
             env,
             entries: Vec::new(),
+            input_files,
+            real_fs,
             last_error: 0,
             identities: std::collections::HashMap::new(),
             next_identity: 0,
@@ -199,11 +221,25 @@ fn host_fn(store: &mut Store<HostState>, name: &str, ty: &FuncType) -> wasmtime:
                 Ok(())
             }
             "input_file_count" => {
-                outs[0] = Val::I32(0);
+                outs[0] = Val::I32(caller.data().input_files.len() as i32);
                 Ok(())
             }
-            "input_file_path" | "input_file_content" => {
-                outs[0] = Val::ExternRef(None);
+            "input_file_path" => {
+                let i = unwrap_i32(&args[0]);
+                let path = caller.data().input_files.get(i as usize).map(|(p, _)| p.clone()).unwrap_or_default();
+                outs[0] = new_text(&mut caller, &path);
+                Ok(())
+            }
+            "input_file_content" => {
+                // Content as text, each byte a char, as file_read_text reads.
+                let i = unwrap_i32(&args[0]);
+                let content: String = caller
+                    .data()
+                    .input_files
+                    .get(i as usize)
+                    .map(|(_, b)| b.iter().map(|&byte| byte as char).collect())
+                    .unwrap_or_default();
+                outs[0] = new_text(&mut caller, &content);
                 Ok(())
             }
             "file_read_text" => {
@@ -296,7 +332,22 @@ fn host_fn(store: &mut Store<HostState>, name: &str, ty: &FuncType) -> wasmtime:
                 outs[0] = new_text(&mut caller, &rest);
                 Ok(())
             }
-            "file_written" => Ok(()),
+            "file_written" => {
+                // In-memory-FS mode: the program's write arrives as
+        // base64 text and lands in the real working directory, the
+        // loader's Node default.
+                let path = text_of(&caller, &args[0]);
+                let content = text_of(&caller, &args[1]);
+                let bytes = base64_decode(&content);
+                let dest = std::path::Path::new(&path);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(dest, &bytes) {
+                    eprintln!("[host] file_written {path}: {e}");
+                }
+                Ok(())
+            }
             "identity_hash" => {
                 // Object identity = the GC's own hash of the object, mixed.
                 // ref_hash is equal for every rooting of the same object;
@@ -314,7 +365,22 @@ fn host_fn(store: &mut Store<HostState>, name: &str, ty: &FuncType) -> wasmtime:
                 outs[0] = Val::I32(((slot as u32).wrapping_mul(0x9E37_79B1)) as i32);
                 Ok(())
             }
-            "file_written" => Ok(()),
+            "file_written" => {
+                // In-memory-FS mode: the program's write arrives as
+        // base64 text and lands in the real working directory, the
+        // loader's Node default.
+                let path = text_of(&caller, &args[0]);
+                let content = text_of(&caller, &args[1]);
+                let bytes = base64_decode(&content);
+                let dest = std::path::Path::new(&path);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(dest, &bytes) {
+                    eprintln!("[host] file_written {path}: {e}");
+                }
+                Ok(())
+            }
             other => {
                 if let Some(m) = other.strip_prefix("math_") {
                     let x = unwrap_f64(&args[0]);
@@ -629,7 +695,7 @@ fn file_op(
 ) -> Result<(), wasmtime::Error> {
     match name {
         "file_system" => {
-            outs[0] = Val::I32(1);
+            outs[0] = Val::I32(caller.data().real_fs as i32);
             Ok(())
         }
         "file_current_directory" => {
@@ -749,6 +815,35 @@ fn file_op(
             panic!("unhandled host op {other}");
         }
     }
+}
+
+fn base64_decode(text: &str) -> Vec<u8> {
+    fn value(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let bytes: Vec<u8> = text.bytes().filter(|b| *b != b'=' && !b.is_ascii_whitespace()).collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+
+    for byte in bytes {
+        buffer = (buffer << 6) | value(byte).unwrap_or(0);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+
+    out
 }
 
 fn rand_u32() -> u32 {
