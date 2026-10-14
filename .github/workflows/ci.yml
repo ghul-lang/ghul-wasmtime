@@ -105,7 +105,7 @@ jobs:
     - name: Run the smoke test
       shell: bash
       env:
-        GHUL_COMPILER: ${{ github.workspace }}/compiler/ghul.dll
+        GHUL_COMPILER: ${{ github.workspace }}/compiler/tools/net10.0/any/ghul.dll
         GHUL_WASMTIME_HOST: ${{ github.workspace }}/target/release/ghul-wasmtime
       run: |
         set -euo pipefail
