@@ -1,0 +1,6 @@
+use IO.Std.write_line
+use IO.File
+
+File.write_all_text("greeting.txt", "written by the program")
+
+write_line("wrote {File.read_all_text("greeting.txt")}")

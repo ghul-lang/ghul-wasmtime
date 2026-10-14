@@ -1,0 +1,11 @@
+use IO.Std.write_line
+
+double(n: int) -> int => n * 2
+
+let total mut = 0
+
+for i in 1::100 do
+    total = total + double(i)
+od
+
+write_line("{total}")
