@@ -5,13 +5,6 @@ use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 use wasmtime::{ArrayRef, Config, Engine, ExternRef, Func, FuncType, Instance, Module, Rooted, Store, Val, ValType};
 
-// Hashed objects live for the length of the run: the identity table keys
-// on their raw GC indices, which recycling would turn into wrong answers.
-thread_local! {
-    static KEEP_ALIVE: std::cell::RefCell<Vec<wasmtime::OwnedRooted<wasmtime::AnyRef>>> =
-        std::cell::RefCell::new(Vec::new());
-}
-
 // Host state, reachable from every host function through Caller::data.
 struct HostState {
     stdin: Option<Vec<u8>>,
@@ -305,32 +298,23 @@ fn host_fn(store: &mut Store<HostState>, name: &str, ty: &FuncType) -> wasmtime:
             }
             "file_written" => Ok(()),
             "identity_hash" => {
-                // Object identity keyed on the raw GC index. Indexes of dead
-                // objects are recycled, so the first hash of an object takes
-                // a persistent root of it: a kept-alive object's index stays
-                // its own for life, and a raw match is the same object. The
-                // loader's WeakMap does the same job with engine help.
-                let raw = match &args[0] {
-                    Val::AnyRef(Some(a)) => a.to_raw(&mut caller).unwrap_or(0),
-                    _ => 0,
-                };
-                let state = caller.data_mut();
-                let next = &mut state.next_identity;
-                let hash = *state.identities.entry(raw).or_insert_with(|| {
-                    *next += 1;
-                    next.wrapping_mul(0x9E37_79B1) as i32
-                });
-                drop(state);
-
+                // Object identity = the GC's own hash of the object, mixed.
+                // ref_hash is equal for every rooting of the same object;
+                // under the non-moving collector selected above it is also
+                // stable for the object's lifetime (under the default
+                // copying collector it is not - objects move, and the hash
+                // follows the move - which is why this collector choice is
+                // load-bearing). A recycled slot colliding with a dead
+                // object's hash is a hash collision, not a wrong answer.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 if let Val::AnyRef(Some(a)) = &args[0] {
-                    if let Ok(owned) = a.to_owned_rooted(&mut caller) {
-                        KEEP_ALIVE.with(|keep| keep.borrow_mut().push(owned));
-                    }
+                    let _ = a.ref_hash(&caller, &mut hasher);
                 }
-
-                outs[0] = Val::I32(hash as i32);
+                let slot = std::hash::Hasher::finish(&hasher);
+                outs[0] = Val::I32(((slot as u32).wrapping_mul(0x9E37_79B1)) as i32);
                 Ok(())
             }
+            "file_written" => Ok(()),
             other => {
                 if let Some(m) = other.strip_prefix("math_") {
                     let x = unwrap_f64(&args[0]);
