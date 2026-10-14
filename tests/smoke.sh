@@ -51,6 +51,14 @@ for case_dir in "$root"/tests/cases/*/; do
         continue
     fi
 
+    if [ ! -f "$case_work/program.wasm" ]; then
+        echo "$name: compile wrote no module; its log:"
+        cat "$case_work/compile.log"
+        ls -la "$case_work"
+        status=1
+        continue
+    fi
+
     host_status=0
     (cd "$case_work" && timeout 30 "$host" "$case_work/program.wasm" \
         > "$case_work/out" 2> "$case_work/host.err") || host_status=$?
