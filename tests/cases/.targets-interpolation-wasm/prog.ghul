@@ -1,7 +1,0 @@
-use IO.Std.write_line
-
-struct POINT(x: int public, y: int public)
-
-let xs = [1, 2, 3]
-
-write_line("{xs} {(1, "one")} {POINT(3, 4)} {1.5 * 2.0}")

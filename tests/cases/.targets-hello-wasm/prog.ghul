@@ -1,3 +1,0 @@
-use IO.Std.write_line
-
-write_line("hello, world")
