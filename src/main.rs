@@ -19,7 +19,7 @@ struct HostState {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: ghul-wasmtime <module.wasm>");
+    let path = std::env::args().nth(1).expect("usage: wasmtime-host <module.wasm>");
 
     let mut config = Config::new();
     config.wasm_gc(true);
@@ -409,7 +409,7 @@ fn bigint(
             }
             v
         }
-        "mod_pow" | "gcd" | "bit_length" | "to_hex" => big0.clone(),
+        "mod_pow" | "gcd" | "bit_length" | "to_hex" | "is_integer_text" | "to_long" | "fits_long" | "to_double" | "to_string" | "compare" | "equals" | "hash" => big0.clone(),
         other => panic!("unhandled bigint op {other}"),
     };
 
