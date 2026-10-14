@@ -43,7 +43,7 @@ for case_dir in "$root"/tests/cases/*/; do
     case_work="$work/$name"
     mkdir -p "$case_work"
 
-    if ! timeout 120 dotnet "$compiler" --target wasm -o "$case_work/program" \
+    if ! timeout 120 dotnet "$compiler" --target wasm -o "$case_work/program.wasm" \
             @"$work/libraries.rsp" "$case_dir/prog.ghul" > "$case_work/compile.log" 2>&1; then
         echo "$name: compile failed"
         head -5 "$case_work/compile.log"
@@ -66,6 +66,7 @@ for case_dir in "$root"/tests/cases/*/; do
     if [ "$host_status" -ne 0 ]; then
         echo "$name: host failed (exit $host_status)"
         head -10 "$case_work/host.err"
+        ls -la "$case_work"
         status=1
         continue
     fi
