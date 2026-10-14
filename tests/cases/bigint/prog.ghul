@@ -1,0 +1,9 @@
+use IO.Std.write_line
+
+let big mut = 1n
+
+for i in 1::30 do
+    big = big * bigint(i)
+od
+
+write_line("{big}")

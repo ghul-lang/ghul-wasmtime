@@ -1,0 +1,11 @@
+use IO.Std.write_line
+
+union Shape is
+    CIRCLE(radius: int);
+    SQUARE(side: int);
+si
+
+area(s: Shape) -> int =>
+    if let c: Shape.CIRCLE = s then 3 * c.radius * c.radius else let q: Shape.SQUARE = s in q.side * q.side fi
+
+write_line("{area(Shape.CIRCLE(2))} {area(Shape.SQUARE(3))}")

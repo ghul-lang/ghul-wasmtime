@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Serialise release builds so concurrent pushes to main can't race over the
+# version number; PR builds keep their own per-ref group and cancel
+# superseded runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Create a version number
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: '0'
+
+    # Patch bump the latest vX.Y.Z tag unless VERSION declares a higher
+    # minor/major floor. Pull request builds get a -beta.<run> suffix so
+    # they can't collide with a real release.
+    - name: Determine the version
+      id: version
+      uses: ghul-lang/create-version@v1.0.0
+      with:
+        prerelease: ${{ github.event_name == 'pull_request' && format('beta.{0}', github.run_number) || '' }}
+
+  ci:
+    name: CI
+    needs: [version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build the host
+      run: cargo build --release
+
+
+    # The smoke compiles its cases with the newest published compiler, the
+    # same one a user installs.
+    - name: Find the newest published compiler
+      shell: bash
+      run: |
+        set -euo pipefail
+        compiler=$(
+          curl -fsSL https://api.nuget.org/v3-flatcontainer/ghul.compiler/index.json \
+            | tr ',' '\n' \
+            | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' \
+            | tr -d '"' \
+            | sort -V \
+            | tail -n 1
+        )
+
+        if [ -z "${compiler}" ]; then
+          echo "no ghul.compiler release could be read from the feed" >&2
+          exit 1
+        fi
+
+        echo "compiler=${compiler}" >>"$GITHUB_ENV"
+        echo "compiling the smoke cases with ghul.compiler ${compiler}"
+
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+
+    # The smoke cases carry their own programs and expected outputs. The
+    # libraries a wasm compile links come from the first-parent checkouts of
+    # ghul-core and ghul-runtime, which is what a user's `ghul run` fetches.
+    - name: Check out the libraries
+      uses: actions/checkout@v7
+      with:
+        repository: ghul-lang/ghul-core
+        ref: main
+        path: libraries/ghul-core
+
+    - name: Check out the runtime
+      uses: actions/checkout@v7
+      with:
+        repository: ghul-lang/ghul-runtime
+        ref: main
+        path: libraries/ghul-runtime
+
+    - name: Run the smoke test
+      shell: bash
+      env:
+        GHUL_COMPILER: ${{ github.workspace }}/compiler/tools/net10.0/any/ghul.dll
+        GHUL_WASMTIME_HOST: ${{ github.workspace }}/target/release/ghul-wasmtime
+      run: |
+        set -euo pipefail
+        mkdir -p compiler
+        curl -fsSL "https://www.nuget.org/api/v2/package/ghul.compiler/${{ env.compiler }}" -o compiler/pkg.zip
+        cd compiler && unzip -oq pkg.zip && cd ..
+        chmod +x tests/smoke.sh
+        bash -x ./tests/smoke.sh
+
+  release:
+    name: Release
+    needs: [version, ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Release-only: a push to main is what ships.
+    if: ${{ github.event_name != 'pull_request' }}
+
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build the host
+      run: cargo build --release
+
+    - name: Stage the release binary
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p dist
+        cp target/release/ghul-wasmtime dist/ghul-wasmtime-x86_64-linux
+        cd dist
+        sha256sum ghul-wasmtime-x86_64-linux > ghul-wasmtime-x86_64-linux.sha256
+
+    - name: Create changelog
+      run: git log -1 --format="%s%n%n%b%n%n" >changelog.txt
+
+    - name: Create a release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create "${{ needs.version.outputs.tag }}" \
+          ./dist/ghul-wasmtime-x86_64-linux \
+          ./dist/ghul-wasmtime-x86_64-linux.sha256 \
+          --title "${{ needs.version.outputs.tag }}" \
+          --notes-file changelog.txt

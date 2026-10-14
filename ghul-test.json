@@ -1,0 +1,29 @@
+{
+    "default": "wasmtime",
+    "configurations": {
+        "wasmtime": {
+            "build": "direct",
+            "compiler": { "command": "dotnet ../../../compiler/tools/net10.0/any/ghul.dll" },
+            "wasm_host": "target/release/ghul-wasmtime",
+            "build_targets": ["wasm"],
+            "run_targets": ["wasm"],
+            "targets": {
+                "wasm": {
+                    "flags": "--target wasm",
+                    "libraries": [
+                        {
+                            "name": "ghul-core",
+                            "root": "libraries/ghul-core",
+                            "sources": "src/**/*.ghul"
+                        },
+                        {
+                            "name": "ghul-runtime",
+                            "root": "libraries/ghul-runtime",
+                            "sources": "@wasm-sources.rsp"
+                        }
+                    ]
+                }
+            }
+        }
+    }
+}
