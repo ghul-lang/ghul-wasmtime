@@ -409,7 +409,7 @@ fn bigint(
             }
             v
         }
-        "is_integer_text" | "to_long" | "fits_long" | "to_double" | "to_string" | "compare" | "equals" | "hash" => big0.clone(),
+        "is_integer_text" | "to_long" | "fits_long" | "to_double" | "to_string" | "compare" | "equals" | "hash" | "mod_pow" | "gcd" | "bit_length" | "to_hex" => big0.clone(),
         other => panic!("unhandled bigint op {other}"),
     };
 
