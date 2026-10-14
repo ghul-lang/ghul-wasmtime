@@ -3,7 +3,14 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
-use wasmtime::{ArrayRef, Config, Engine, ExternRef, Func, FuncType, Instance, Module, Store, Val, ValType};
+use wasmtime::{ArrayRef, Config, Engine, ExternRef, Func, FuncType, Instance, Module, Rooted, Store, Val, ValType};
+
+// Hashed objects live for the length of the run: the identity table keys
+// on their raw GC indices, which recycling would turn into wrong answers.
+thread_local! {
+    static KEEP_ALIVE: std::cell::RefCell<Vec<wasmtime::OwnedRooted<wasmtime::AnyRef>>> =
+        std::cell::RefCell::new(Vec::new());
+}
 
 // Host state, reachable from every host function through Caller::data.
 struct HostState {
@@ -14,7 +21,7 @@ struct HostState {
     env: Vec<(String, String)>,
     entries: Vec<String>,
     last_error: i32,
-    identities: std::collections::HashMap<u32, u32>,
+    identities: std::collections::HashMap<u32, i32>,
     next_identity: u32,
 }
 
@@ -24,6 +31,14 @@ fn main() {
     let mut config = Config::new();
     config.wasm_gc(true);
     config.wasm_exceptions(true);
+
+    // The copying collector moves objects, which would invalidate the raw
+    // GC indices the identity table keys on. The deferred
+    // reference-counting collector never moves an object, so an object's
+    // index is stable for as long as it lives - which the table guarantees
+    // by rooting every hashed object. Cycles leak until the store drops;
+    // revisit if a long-running program shows that.
+    config.collector(wasmtime::Collector::DeferredReferenceCounting);
     let engine = Engine::new(&config).unwrap();
     let module = Module::from_file(&engine, &path).unwrap();
     let args: Vec<String> = std::env::args().skip(2).collect();
@@ -65,8 +80,13 @@ fn main() {
     eprintln!("[host] instantiated in {:?}", store.data().started.elapsed());
 
     let run_start = Instant::now();
-    let mut result: Vec<Val> = Vec::new();
+    let result_count = start.ty(&store).results().len();
+    let mut result: Vec<Val> = vec![Val::I32(0); result_count];
     start.call(&mut store, &[], &mut result).expect("_start ran");
+
+    if let Some(Val::I32(code)) = result.first() {
+        eprintln!("[host] _start result: {code}");
+    }
     eprintln!("[host] _start finished in {:?}", run_start.elapsed());
 }
 
@@ -285,6 +305,11 @@ fn host_fn(store: &mut Store<HostState>, name: &str, ty: &FuncType) -> wasmtime:
             }
             "file_written" => Ok(()),
             "identity_hash" => {
+                // Object identity keyed on the raw GC index. Indexes of dead
+                // objects are recycled, so the first hash of an object takes
+                // a persistent root of it: a kept-alive object's index stays
+                // its own for life, and a raw match is the same object. The
+                // loader's WeakMap does the same job with engine help.
                 let raw = match &args[0] {
                     Val::AnyRef(Some(a)) => a.to_raw(&mut caller).unwrap_or(0),
                     _ => 0,
@@ -293,8 +318,16 @@ fn host_fn(store: &mut Store<HostState>, name: &str, ty: &FuncType) -> wasmtime:
                 let next = &mut state.next_identity;
                 let hash = *state.identities.entry(raw).or_insert_with(|| {
                     *next += 1;
-                    next.wrapping_mul(0x9E37_79B1)
+                    next.wrapping_mul(0x9E37_79B1) as i32
                 });
+                drop(state);
+
+                if let Val::AnyRef(Some(a)) = &args[0] {
+                    if let Ok(owned) = a.to_owned_rooted(&mut caller) {
+                        KEEP_ALIVE.with(|keep| keep.borrow_mut().push(owned));
+                    }
+                }
+
                 outs[0] = Val::I32(hash as i32);
                 Ok(())
             }
