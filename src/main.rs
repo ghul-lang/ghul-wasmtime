@@ -383,6 +383,7 @@ fn bigint(
                 }
             }
             Val::I64(v) => BigInt::from(*v),
+            Val::I32(v) => BigInt::from(*v as i64),
             _ => BigInt::from(0),
         }
     };
