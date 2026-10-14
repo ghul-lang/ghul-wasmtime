@@ -113,7 +113,7 @@ jobs:
         curl -fsSL "https://www.nuget.org/api/v2/package/ghul.compiler/${{ env.compiler }}" -o compiler/pkg.zip
         cd compiler && unzip -oq pkg.zip && cd ..
         chmod +x tests/smoke.sh
-        ./tests/smoke.sh
+        bash -x ./tests/smoke.sh
 
   release:
     name: Release

@@ -51,8 +51,16 @@ for case_dir in "$root"/tests/cases/*/; do
         continue
     fi
 
+    host_status=0
     (cd "$case_work" && timeout 30 "$host" "$case_work/program.wasm" \
-        > "$case_work/out" 2> "$case_work/host.err")
+        > "$case_work/out" 2> "$case_work/host.err") || host_status=$?
+
+    if [ "$host_status" -ne 0 ]; then
+        echo "$name: host failed (exit $host_status)"
+        head -10 "$case_work/host.err"
+        status=1
+        continue
+    fi
 
     if cmp -s "$case_work/out" "$case_dir/run.expected"; then
         echo "$name: pass"
