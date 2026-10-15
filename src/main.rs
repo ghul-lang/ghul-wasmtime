@@ -92,17 +92,26 @@ fn main() {
     let instance = Instance::new(&mut store, &module, &imports).expect("instantiate");
     let start = instance.get_func(&mut store, "_start").expect("_start");
 
-    eprintln!("[host] instantiated in {:?}", store.data().started.elapsed());
+    // The host stays silent unless it is asked to trace: a program's output
+    // is its own, and timings on standard error are diagnostics, not
+    // something every run should show.
+    let trace = std::env::var_os("GHUL_WASMTIME_TRACE").is_some();
+
+    if trace {
+        eprintln!("[host] instantiated in {:?}", store.data().started.elapsed());
+    }
 
     let run_start = Instant::now();
     let result_count = start.ty(&store).results().len();
     let mut result: Vec<Val> = vec![Val::I32(0); result_count];
     start.call(&mut store, &[], &mut result).expect("_start ran");
 
-    if let Some(Val::I32(code)) = result.first() {
-        eprintln!("[host] _start result: {code}");
+    if trace {
+        if let Some(Val::I32(code)) = result.first() {
+            eprintln!("[host] _start result: {code}");
+        }
+        eprintln!("[host] _start finished in {:?}", run_start.elapsed());
     }
-    eprintln!("[host] _start finished in {:?}", run_start.elapsed());
 }
 
 // ---- js-string builtins -------------------------------------------------
