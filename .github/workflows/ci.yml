@@ -102,18 +102,20 @@ jobs:
         ref: main
         path: libraries/ghul-runtime
 
+    - name: Install ghul-test
+      run: dotnet tool install --global ghul.test --version 8.2.0
+
+    # The smoke cases are ordinary ghul-test projects: ghul-test.json names
+    # the compiler the downloaded package holds, the freshly built host as
+    # the wasm host, and the library checkouts above.
     - name: Run the smoke test
       shell: bash
-      env:
-        GHUL_COMPILER: ${{ github.workspace }}/compiler/tools/net10.0/any/ghul.dll
-        GHUL_WASMTIME_HOST: ${{ github.workspace }}/target/release/ghul-wasmtime
       run: |
         set -euo pipefail
         mkdir -p compiler
         curl -fsSL "https://www.nuget.org/api/v2/package/ghul.compiler/${{ env.compiler }}" -o compiler/pkg.zip
         cd compiler && unzip -oq pkg.zip && cd ..
-        chmod +x tests/smoke.sh
-        bash -x ./tests/smoke.sh
+        ghul-test tests/cases
 
   release:
     name: Release
