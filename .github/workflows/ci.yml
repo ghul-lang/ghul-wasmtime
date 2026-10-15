@@ -143,9 +143,9 @@ jobs:
       run: |
         set -euo pipefail
         mkdir -p dist
-        cp target/release/ghul-wasmtime dist/ghul-wasmtime-x86_64-linux
+        cp target/release/ghul-wasmtime dist/ghul-wasmtime-linux-x64
         cd dist
-        sha256sum ghul-wasmtime-x86_64-linux > ghul-wasmtime-x86_64-linux.sha256
+        sha256sum ghul-wasmtime-linux-x64 > ghul-wasmtime-linux-x64.sha256
 
     - name: Create changelog
       run: git log -1 --format="%s%n%n%b%n%n" >changelog.txt
@@ -155,7 +155,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh release create "${{ needs.version.outputs.tag }}" \
-          ./dist/ghul-wasmtime-x86_64-linux \
-          ./dist/ghul-wasmtime-x86_64-linux.sha256 \
+          ./dist/ghul-wasmtime-linux-x64 \
+          ./dist/ghul-wasmtime-linux-x64.sha256 \
           --title "${{ needs.version.outputs.tag }}" \
           --notes-file changelog.txt
